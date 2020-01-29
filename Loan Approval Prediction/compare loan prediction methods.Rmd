@@ -1,0 +1,456 @@
+---
+title: "Loan Approval Prediction by using Kernel SVM, Decision Tree and Random Forest Models"
+output: github_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+df <- read.csv("customer_loan_prediction.csv")
+```
+
+
+```{r}
+# Print the structure of the dataframe
+str(df)
+```
+
+
+```{r}
+head(df)
+```
+
+
+
+```{r}
+# Check for the NA values
+any(is.na(df))
+```
+There are no NA values in this dataset.
+
+# We need debt/income proportion. So we create a new variable as "dti"
+```{r}
+# Calculating DTI
+df$dti <- (df$debts/df$income)*100
+```
+
+
+
+# Create loan_decision_status variable which is our target variable to use for loan prediction
+```{r}
+
+df$loan_decision_status <- ifelse(df$loan_decision_type == 'Denied', 0, 1)
+str(df)
+# Encoding the target variable as factor
+df$loan_decision_status <- factor(df$loan_decision_status, levels = c(0, 1))
+
+```
+
+
+
+```{r}
+#Selecting the required fields for prediction
+customer_loan_refined <- df[,c(3,4,6:8,11,13:14)]
+head(customer_loan_refined)
+```
+
+# Converting categorical variables to numeric
+```{r}
+customer_loan_refined$gender <- as.numeric(factor(customer_loan_refined$gender,
+                                                  levels = c('Male','Female'),
+                                                  labels = c(1,2)))
+
+customer_loan_refined$marital_status <- as.numeric(factor(customer_loan_refined$marital_status,
+                                                          levels = c('Divorced','Married','Single'),
+                                                          labels = c(1,2,3)))
+
+customer_loan_refined$occupation <- as.numeric(factor(customer_loan_refined$occupation,
+                                                      levels = c('Accout','Business','IT','Manager','NYPD'),
+                                                      labels = c(1,2,3,4,5)))
+
+customer_loan_refined$loan_type <- as.numeric(factor(customer_loan_refined$loan_type,
+                                                     levels = c('Auto','Credit','Home','Personal'),
+                                                     labels = c(1,2,3,4)))
+
+head(customer_loan_refined)
+```
+
+# Correlation matrixes  (understand the correlation between more than 2 variables)
+```{r}
+library(GGally)
+
+cor(customer_loan_refined[1:7])
+```
+
+
+
+```{r}
+ggcorr(customer_loan_refined[1:7])
+```
+
+
+
+```{r}
+ggpairs(customer_loan_refined[1:7])
+
+```
+
+As you see at the graph above there are no variable has high correlation. Which is good against overfitting problem.
+
+
+# Splitting the customer_loan_refined dataset into training and test sets
+```{r}
+#library(caTools)
+#set.seed(123)
+#split = sample.split(customer_loan_refined$loan_decision_status, SplitRatio = 0.70)
+#training_set = subset(customer_loan_refined, split == TRUE)
+#test_set = subset(customer_loan_refined, split == FALSE)
+```
+
+
+
+# Splitting the customer_loan_refined dataset into training and test sets
+```{r}
+library(caTools)
+set.seed(123)
+split = sample.split(customer_loan_refined$loan_decision_status, SplitRatio = 0.75)
+training_set = subset(customer_loan_refined, split == TRUE)
+test_set = subset(customer_loan_refined, split == FALSE)
+
+```
+
+
+# Understand the data
+```{r}
+library(funModeling)
+profiling_num(customer_loan_refined)
+```
+
+Since the difference of std_deviations of the variables are too high, we should scale the veriables for better prediction
+
+# Applying Feature Scaling
+```{r}
+#Scale all variables other than dependent variable which is 8th column of the table
+training_set[-8] = scale(training_set[-8])
+test_set[-8] = scale(test_set[-8])
+
+```
+
+
+
+
+Dimensionality Reduction using PCA
+As there are more than two independent variables in customer data, it is difficult to plot chart as two dimensions are needed to better visualize how Machine Learning models work.
+
+To reduce dimensions, perform the following:
+
+Apply Dimensionality Reduction technique using Principal Component Analysis (PCA) on customer dataset except on dependent variable and reduce it to two dimensions.
+Before applying PCA, install and load caret package.
+
+# Applying PCA
+```{r}
+# install.packages('caret')  http://topepo.github.io/caret/index.html
+library(caret)
+# install.packages('e1071')
+library(e1071)
+pca = preProcess(x = training_set[-8], method = 'pca', pcaComp = 2)
+training_set = predict(pca, training_set)
+training_set = training_set[c(2, 3, 1)]
+test_set = predict(pca, test_set)
+test_set = test_set[c(2, 3, 1)]
+```
+
+## 1- Fitting SVM to the Training set
+Many machine learning models will get into over fitting problem by using the higher dimensions. This is not the problem with SVM as decision boundary is obtained using the samples nearest to the boundary. The use of kernal with regularization gives better performance.
+```{r}
+# install.packages('e1071')
+library(e1071)
+classifier = svm(formula = loan_decision_status ~ .,
+                 data = training_set,
+                 type = 'C-classification',
+                 kernel = 'radial')
+```
+
+
+# Predicting the Test set results
+```{r}
+y_pred = predict(classifier, newdata = test_set[-3])
+```
+
+
+```{r}
+# Making the Confusion Matrix
+cm = table(test_set[, 3], y_pred)
+accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+accuracy
+```
+
+
+# Applying k-Fold Cross Validation
+```{r}
+##install.packages('caret')
+library(caret)
+folds = createFolds(training_set$loan_decision_status, k = 10)
+cv = lapply(folds, function(x) {
+  training_fold = training_set[-x, ]
+  test_fold = training_set[x, ]
+  classifier = svm(formula = loan_decision_status ~ .,
+                   data = training_fold,
+                   type = 'C-classification',
+                   kernel = 'radial')
+  y_pred = predict(classifier, newdata = test_fold[-3])
+  cm = table(test_fold[, 3], y_pred)
+  accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+  return(accuracy)
+})
+accuracy = mean(as.numeric(cv))
+
+```
+As you see the accuracy value is higher than before. After the cross validation we have a better model.
+
+# Applying Grid Search to find the best parameters
+```{r}
+# install.packages('caret')
+library(caret)
+classifier = train(form = loan_decision_status ~ ., data = training_set, method = 'svmRadial')
+classifier
+classifier$bestTune  # burada buldugumuz sigma c degerlerini yukardaki classifier olan yerde parametre olarak manuel girip oradaki classifieri da kullanabiliriz. ama bunu da direk kullanabiliriz.
+```
+
+
+
+# Now we have a new classifier which is tuned. Let's have look at the new model and it's accuracy.
+```{r}
+y_pred = predict(classifier, newdata = test_set[-3])
+cm = table(test_set[, 3], y_pred)
+accuracy = (cm[1,1] + cm[2,2]) / (cm[1,1] + cm[2,2] + cm[1,2] + cm[2,1])
+accuracy
+```
+As you see the accuracy value is higher than before. After the cross validation and grid search we have predictions with better accuracy.
+
+
+
+
+```{r}
+# Visualising the Training set results
+library(ElemStatLearn)
+set = training_set
+X1 = seq(min(set[, 1]) - 1, max(set[, 1]) + 1, by = 0.01)
+X2 = seq(min(set[, 2]) - 1, max(set[, 2]) + 1, by = 0.01)
+
+grid_set = expand.grid(X1, X2)
+colnames(grid_set) = c('PC1', 'PC2')
+y_grid = predict(classifier, newdata = grid_set)
+plot(set[, -3],
+     main = 'Kernel SVM (Training set)',
+     xlab = 'PC1', ylab = 'PC2',
+     xlim = range(X1), ylim = range(X2))
+contour(X1, X2, matrix(as.numeric(y_grid), length(X1), length(X2)), add = TRUE)
+points(grid_set, pch = '.', col = ifelse(y_grid == 1, 'gray', 'tomato'))
+points(set, pch = 21, bg = ifelse(set[, 3] == 1, 'blue', 'red3'))
+```
+
+
+```{r}
+# Visualising the Test set results
+library(ElemStatLearn)
+set = test_set
+X1 = seq(min(set[, 1]) - 1, max(set[, 1]) + 1, by = 0.01)
+X2 = seq(min(set[, 2]) - 1, max(set[, 2]) + 1, by = 0.01)
+grid_set = expand.grid(X1, X2)
+colnames(grid_set) = c('PC1', 'PC2')
+y_grid = predict(classifier, newdata = grid_set)
+plot(set[, -3],
+     main = 'Kernel SVM (Training set)',
+     xlab = 'PC1', ylab = 'PC2',
+     xlim = range(X1), ylim = range(X2))
+contour(X1, X2, matrix(as.numeric(y_grid), length(X1), length(X2)), add = TRUE)
+points(grid_set, pch = '.', col = ifelse(y_grid == 1, 'gray', 'tomato'))
+points(set, pch = 21, bg = ifelse(set[, 3] == 1, 'blue', 'red3'))
+
+```
+
+
+
+# 2- Fitting Decision Tree Classification to the Training set
+
+# Splitting the customer_loan_refined dataset into training and test sets
+We are here split the dataset again. We won't apply PCA for this time.
+```{r}
+library(caTools)
+set.seed(123)
+split = sample.split(customer_loan_refined$loan_decision_status, SplitRatio = 0.75)
+training_set = subset(customer_loan_refined, split == TRUE)
+test_set = subset(customer_loan_refined, split == FALSE)
+
+```
+
+# Applying Feature Scaling
+```{r}
+#Scale all variables other than dependent variable which is 8th column of the table
+training_set[-8] = scale(training_set[-8])
+test_set[-8] = scale(test_set[-8])
+
+```
+
+
+Decision trees create a set of binary splits on the predictor variables in order to create a tree that can be used to classify new observations into one of two groups. Here, we will be using classical trees.
+```{r}
+# install.packages('rpart')
+library(rpart)
+
+dtree <- rpart(formula = loan_decision_status ~ .,
+               method="class",
+               data=training_set,
+               parms=list(split="information"))
+dtree$cptable
+
+
+```
+To choose the final tree size, we need to choose the smallest tree whose cross-validated error (xerror) is within one standard error of the minimum cross-validated error value.
+From the cptable, a tree with one splits has a complexity parameter of 0.0100000 , so the statement prune(dtree, cp=0.0100000 ) returns a tree with the desired size.
+
+```{r}
+plotcp(dtree)
+```
+
+
+
+# Visualize decision tree
+
+```{r}
+dtree.pruned <- prune(dtree, cp= 0.0100000 )
+library(rpart.plot)
+prp(dtree.pruned, type = 2, extra = 104,
+    fallen.leaves = TRUE, main="Decision Tree")
+
+```
+We have then plotted the tree: pruned tree for predicting the loan status
+
+
+```{r}
+dtree.pred <- predict(dtree.pruned, training_set, type="class")
+```
+
+Confusion matrix
+```{r}
+dtree.perf <- table(training_set$loan_decision_status, dtree.pred,
+                    dnn=c("Actual", "Predicted"))
+dtree.perf
+```
+Finally, we ran the confusion table to know the accuracy of the model
+
+
+```{r}
+accuracy_dt = (dtree.perf[1,1] + dtree.perf[2,2]) / (dtree.perf[1,1] + dtree.perf[2,2] + dtree.perf[1,2] + dtree.perf[2,1])
+accuracy_dt
+```
+Accuracy: Train data: 96.51%.  Results show better performance than the Kernel SVM model.
+
+
+In R, decision trees can be grown and pruned using the rpart() function and prune() function in the rpart package. First, the tree is grown using the rpart() function. We printed the tree and the summary to examine the fitted model. The tree may be too large and need to be pruned. To choose a final tree size, examine the cptable of the list returned by rpart(). It contains data about the prediction error for different tree sizes. The complexity parameter (cp) is used to penalize larger trees. 
+
+
+
+
+# 3.1 -Fitting Random Classification to the Training set
+
+```{r}
+library(randomForest) 
+set.seed(42) 
+fit.forest <- randomForest(loan_decision_status ~ ., data=training_set,
+                           na.action=na.roughfix,
+                           importance=TRUE)
+fit.forest
+```
+The random forest function grew 500 traditional decision trees by sampling  observations with replacement from the training sample. Random forests provides natural measure of variable importance. 
+
+```{r}
+importance(fit.forest, type=2)
+```
+The relative importance measure specified by type=2 option is the total decrease in node impurities from splitting on that variable, averaged over all trees. In our trees,the most important variable is "dti" and the least is "gender".
+
+
+Creating Confusion matrix
+```{r}
+forest.pred <- predict(fit.forest, training_set)
+forest.perf <- table(training_set$loan_decision_status, forest.pred,
+                     dnn=c("Actual", "Predicted"))
+forest.perf
+```
+
+```{r}
+accuracy_rf = (forest.perf[1,1] + forest.perf[2,2]) / (forest.perf[1,1] + forest.perf[2,2] + forest.perf[1,2] + forest.perf[2,1])
+accuracy_rf
+```
+
+We have finally measured the accuracy for the training sample and applied the prediction to the test sample. THe accuracy of random forest with this model is %100. That means it has predicted all values correctly. 
+
+Random forests tend to be very accurate compared to other classification methods though. Also, they can handle large problems. Personally, I have more confidence from the results generated from forest trees compared to decision trees. One problem which might occur with single decision tree is that it can overfit. Random forest, on the other hand, prevents overfitting by creating random subsets of the variables and building smaller trees using the subsets and then it combines the subtrees.
+
+
+
+# 3.2 -Fitting Random Classification to the Test set
+
+
+```{r}
+set.seed(42) 
+fit.forest2 <- randomForest(loan_decision_status ~ ., data=test_set,
+                           na.action=na.roughfix,
+                           importance=TRUE)
+fit.forest2
+```
+No. of variables tried at each split: 2 
+
+```{r}
+importance(fit.forest2, type=2)
+```
+The most important variable is "credit score" (it is different from the training set) and the least is "gender".
+
+
+Creating Confusion matrix
+```{r}
+forest.pred2 <- predict(fit.forest2, test_set)
+forest.perf2 <- table(test_set$loan_decision_status, forest.pred2,
+                     dnn=c("Actual", "Predicted"))
+forest.perf2
+```
+
+```{r}
+accuracy_rf = (forest.perf2[1,1] + forest.perf2[2,2]) / (forest.perf2[1,1] + forest.perf2[2,2] + forest.perf2[1,2] + forest.perf2[2,1])
+accuracy_rf
+```
+The accuracy of test has is also %100. 
+The best predictions are made by Random FOrest model in this case. 
+As a result we should use random forest predictions for this particular dataset for decision making process.
+
+
+
+So now, we have predictions for 114 customers who apply for loans with accuracy of 100%. We can apply this method for any new data set to have a prediction about their eligibility of getting a loan. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
